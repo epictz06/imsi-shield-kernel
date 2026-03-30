@@ -160,8 +160,13 @@ jobs:
           # Check if DIAG_CHAR is enabled
           grep DIAG out/.config || echo "DIAG_CHAR not in .config!"
 
-          # Build (allow errors from diag driver, try to fix common issues)
-          make O=out -j$(nproc) 2>&1 | tee build.log | tail -30
+          # Build - capture full log
+          make O=out -j$(nproc) 2>&1 | tee build.log
+          echo ""
+          echo "=== ERRORS ==="
+          grep -E "error:|Error:|fatal error:" build.log | head -30
+          echo "=== DIAG ERRORS ==="
+          grep -E "diag" build.log | grep -i "error" | head -20
 
           # If build failed, try fixing common 4.19->5.4 issues
           if [ ! -f out/arch/arm64/boot/Image ]; then
