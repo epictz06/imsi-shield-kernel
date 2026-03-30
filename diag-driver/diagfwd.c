@@ -18,7 +18,7 @@
 #ifdef CONFIG_DIAG_OVER_USB
 #include <linux/usb/usbdiag.h>
 #endif
-#include <soc/qcom/socinfo.h>
+/* #include <soc/qcom/socinfo.h> */ /* not needed on SM8350 */
 #include <soc/qcom/restart.h>
 #include "diagmem.h"
 #include "diagchar.h"
@@ -85,30 +85,8 @@ static int has_device_tree(void)
 
 int chk_config_get_id(void)
 {
-	switch (socinfo_get_msm_cpu()) {
-	case MSM_CPU_8960:
-	case MSM_CPU_8960AB:
-		return AO8960_TOOLS_ID;
-	case MSM_CPU_8064:
-		return APQ8064_TOOLS_ID;
-	case MSM_CPU_8974:
-		return MSM8974_TOOLS_ID;
-	case MSM_CPU_8084:
-		return APQ8084_TOOLS_ID;
-	case MSM_CPU_8916:
-		return MSM8916_TOOLS_ID;
-	case MSM_CPU_8996:
-		return MSM_8996_TOOLS_ID;
-	default:
-		if (driver->use_device_tree) {
-			if (machine_is_msm8974())
-				return MSM8974_TOOLS_ID;
-			else
-				return 0;
-		} else {
-			return 0;
-		}
-	}
+	/* SM8350+ doesn't use legacy MSM_CPU identifiers */
+	return 0;
 }
 
 /*
@@ -117,18 +95,8 @@ int chk_config_get_id(void)
  */
 int chk_apps_only(void)
 {
-	if (driver->use_device_tree)
-		return 1;
-
-	switch (socinfo_get_msm_cpu()) {
-	case MSM_CPU_8960:
-	case MSM_CPU_8960AB:
-	case MSM_CPU_8064:
-	case MSM_CPU_8974:
-		return 1;
-	default:
-		return 0;
-	}
+	/* SM8350+ always uses device tree and apps-only mode */
+	return 1;
 }
 
 /*
@@ -899,7 +867,7 @@ int diag_cmd_get_mobile_id(unsigned char *src_buf, int src_len,
 	rsp.padding[1] = 0;
 	rsp.padding[2] = 0;
 	rsp.family = 0;
-	rsp.chip_id = (uint32_t)socinfo_get_id();
+	rsp.chip_id = 0; /* SM8350: socinfo_get_id not available */
 
 	memcpy(dest_buf, &rsp, sizeof(rsp));
 	write_len += sizeof(rsp);
