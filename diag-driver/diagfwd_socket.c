@@ -1152,7 +1152,7 @@ int diag_socket_init(void)
 
 	for (i = 0; i < ARRAY_SIZE(restart_notifiers); i++) {
 		nb = &restart_notifiers[i];
-		handle = subsys_notif_register_notifier(nb->name, &nb->nb);
+		handle = NULL;
 		DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 			 "%s: registering notifier for '%s', handle=%pK\n",
 			 __func__, nb->name, handle);

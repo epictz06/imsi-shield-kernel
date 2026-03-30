@@ -4348,7 +4348,9 @@ void diag_ws_release(void)
 #if IS_ENABLED(CONFIG_IPC_LOGGING)
 static void diag_debug_init(void)
 {
+	#ifdef CONFIG_IPC_LOGGING
 	diag_ipc_log = ipc_log_context_create(DIAG_IPC_LOG_PAGES, "diag", 0);
+#endif
 	if (!diag_ipc_log)
 		pr_err("diag: Failed to create IPC logging context\n");
 	/*
