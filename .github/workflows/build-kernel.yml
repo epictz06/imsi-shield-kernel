@@ -1,0 +1,175 @@
+name: Build OnePlus 9 Kernel with DIAG_CHAR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli \
+            microsoft-edge-stable google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential flex libelf-dev libssl-dev \
+            lz4 python3 cpio gcc-aarch64-linux-gnu
+
+      - name: Clone kernel source (LineageOS 23.2 for OnePlus 9)
+        run: |
+          git clone --depth=1 -b lineage-23.2 \
+            https://github.com/LineageOS/android_kernel_oneplus_sm8350.git kernel
+          echo "Kernel cloned: $(head -3 kernel/Makefile)"
+
+      - name: Clone Clang toolchain
+        run: |
+          mkdir -p toolchain
+          git clone --depth=1 -b main \
+            https://gitlab.com/nicknisi/nicknisi.git toolchain/clang 2>/dev/null || \
+          git clone --depth=1 \
+            https://github.com/nicknisi/nicknisi.github.io.git toolchain/clang 2>/dev/null || true
+
+          # Use AOSP clang - download prebuilt
+          if [ ! -f toolchain/clang/bin/clang ]; then
+            echo "Downloading AOSP Clang..."
+            wget -q "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz" \
+              -O /tmp/clang.tar.gz 2>/dev/null || true
+            if [ -f /tmp/clang.tar.gz ] && [ $(stat -c%s /tmp/clang.tar.gz) -gt 10000 ]; then
+              mkdir -p toolchain/clang && tar xf /tmp/clang.tar.gz -C toolchain/clang
+            fi
+          fi
+
+          # Final fallback: use system clang
+          if [ ! -f toolchain/clang/bin/clang ]; then
+            sudo apt-get install -y clang-14 lld-14
+            mkdir -p toolchain/clang/bin
+            ln -sf /usr/bin/clang-14 toolchain/clang/bin/clang
+            ln -sf /usr/bin/clang++-14 toolchain/clang/bin/clang++
+            ln -sf /usr/bin/lld-14 toolchain/clang/bin/ld.lld
+            ln -sf /usr/bin/llvm-ar-14 toolchain/clang/bin/llvm-ar
+            ln -sf /usr/bin/llvm-nm-14 toolchain/clang/bin/llvm-nm
+            ln -sf /usr/bin/llvm-objcopy-14 toolchain/clang/bin/llvm-objcopy
+            ln -sf /usr/bin/llvm-objdump-14 toolchain/clang/bin/llvm-objdump
+            ln -sf /usr/bin/llvm-strip-14 toolchain/clang/bin/llvm-strip
+            ln -sf /usr/bin/llvm-readelf-14 toolchain/clang/bin/llvm-readelf
+          fi
+
+          ls toolchain/clang/bin/clang*
+
+      - name: Copy DIAG driver into kernel
+        run: |
+          cp -r diag-driver/ kernel/drivers/char/diag/
+          echo "Copied $(ls kernel/drivers/char/diag/*.c | wc -l) source files"
+
+          # Patch drivers/char/Kconfig
+          echo 'source "drivers/char/diag/Kconfig"' >> kernel/drivers/char/Kconfig
+
+          # Patch drivers/char/Makefile
+          echo 'obj-$(CONFIG_DIAG_CHAR)		+= diag/' >> kernel/drivers/char/Makefile
+
+          # Find and patch defconfig
+          DEFCONFIG=$(find kernel/arch/arm64/configs -name "*lahaina*qgki*" -type f | head -1)
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find kernel/arch/arm64/configs -path "*/vendor/*" -name "*lahaina*" -type f | head -1)
+          fi
+          echo "Defconfig: $DEFCONFIG"
+          echo "CONFIG_DIAG_CHAR=y" >> "$DEFCONFIG"
+          echo "CONFIG_DIAG_OVER_USB=y" >> "$DEFCONFIG"
+          echo "DIAG_CHAR added to defconfig"
+
+      - name: Build kernel
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH="$(pwd)/../toolchain/clang/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export LLVM=1
+          export LLVM_IAS=1
+
+          # Find defconfig name
+          DEFCONFIG=$(find arch/arm64/configs -name "*lahaina*qgki*" -type f | head -1)
+          DEFCONFIG_NAME=$(echo "$DEFCONFIG" | sed 's|arch/arm64/configs/||')
+          echo "Using: $DEFCONFIG_NAME"
+
+          # Configure
+          make O=out "$DEFCONFIG_NAME" 2>&1 | tail -5
+
+          # Check if DIAG_CHAR is enabled
+          grep DIAG out/.config || echo "DIAG_CHAR not in .config!"
+
+          # Build (allow errors from diag driver, try to fix common issues)
+          make O=out -j$(nproc) 2>&1 | tee build.log | tail -30
+
+          # If build failed, try fixing common 4.19->5.4 issues
+          if [ ! -f out/arch/arm64/boot/Image ]; then
+            echo "Build failed. Checking for common issues..."
+
+            # Fix access_ok (3 args -> 2 args in 5.4)
+            find drivers/char/diag/ -name "*.c" -exec sed -i \
+              's/access_ok(VERIFY_WRITE,/access_ok(/g; s/access_ok(VERIFY_READ,/access_ok(/g' {} +
+
+            # Retry build
+            make O=out -j$(nproc) 2>&1 | tail -30
+          fi
+
+          if [ -f out/arch/arm64/boot/Image ]; then
+            echo "=== BUILD SUCCESSFUL ==="
+            ls -la out/arch/arm64/boot/Image
+          else
+            echo "=== BUILD FAILED - see build.log ==="
+            grep -i "error:" build.log | head -20
+            exit 1
+          fi
+
+      - name: Create AnyKernel3 flashable zip
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp kernel/out/arch/arm64/boot/Image anykernel/
+          cp kernel/out/arch/arm64/boot/dtb* anykernel/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+
+          cat > anykernel/anykernel.sh << 'AKEOF'
+          # AnyKernel3 Ramdisk Mod Script
+          properties() { '
+          kernel.string=IMSI-Shield-Kernel-with-DIAG
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=lemonade
+          device.name2=OnePlus9
+          device.name3=LE2110
+          device.name4=LE2115
+          supported.versions=
+          '; }
+          . tools/ak3-core.sh
+          split_boot
+          flash_boot
+          AKEOF
+
+          cd anykernel
+          zip -r9 ../IMSI-Shield-Kernel.zip * -x .git README.md *placeholder
+          ls -la ../IMSI-Shield-Kernel.zip
+
+      - name: Upload kernel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: IMSI-Shield-Kernel
+          path: IMSI-Shield-Kernel.zip
+          retention-days: 90
