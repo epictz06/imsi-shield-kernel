@@ -1553,7 +1553,7 @@ void diag_dci_notify_client(int peripheral_mask, int data, int proc)
 	struct pid *pid_struct = NULL;
 	struct task_struct *dci_task = NULL;
 
-	memset(&info, 0, sizeof(struct siginfo));
+	memset(&info, 0, sizeof(struct kernel_siginfo));
 	info.si_code = SI_QUEUE;
 	info.si_int = (peripheral_mask | data);
 	if (data == DIAG_STATUS_OPEN)

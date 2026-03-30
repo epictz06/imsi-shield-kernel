@@ -112,7 +112,7 @@ void diag_notify_md_client(uint8_t proc, uint8_t peripheral, int data)
 		return;
 
 	mutex_lock(&driver->md_session_lock);
-	memset(&info, 0, sizeof(struct siginfo));
+	memset(&info, 0, sizeof(struct kernel_siginfo));
 	info.si_code = SI_QUEUE;
 	info.si_int = (DIAG_GET_MD_DEVICE_SIG_MASK(proc) | data);
 	if (proc == DIAG_LOCAL_PROC)
