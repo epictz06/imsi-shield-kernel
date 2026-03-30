@@ -1547,7 +1547,7 @@ void diag_dci_channel_open_work(struct work_struct *work)
 void diag_dci_notify_client(int peripheral_mask, int data, int proc)
 {
 	int stat = 0;
-	struct siginfo info;
+	struct kernel_siginfo info;
 	struct list_head *start, *temp;
 	struct diag_dci_client_tbl *entry = NULL;
 	struct pid *pid_struct = NULL;
